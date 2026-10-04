@@ -1,0 +1,96 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: relay
+      POSTGRES_USER: relay
+      POSTGRES_PASSWORD: relay
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - relay_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U relay -d relay"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  migrate:
+    build: .
+    restart: "no"
+    command: ["npm", "run", "db:migrate"]
+    environment:
+      DATABASE_URL: postgresql://relay:relay@postgres:5432/relay
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    build: .
+    restart: unless-stopped
+    command: ["npm", "run", "start", "--workspace", "@relay/api"]
+    environment:
+      PORT: 4000
+      REDIS_URL: redis://redis:6379
+      DATABASE_URL: postgresql://relay:relay@postgres:5432/relay
+      NODE_ENV: ${NODE_ENV:-development}
+      RELAY_API_TOKEN: ${RELAY_API_TOKEN:-}
+      MAX_STEPS: ${MAX_STEPS:-50}
+    ports:
+      - "127.0.0.1:4000:4000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  worker:
+    build: .
+    restart: unless-stopped
+    command: ["npm", "run", "start", "--workspace", "@relay/worker"]
+    environment:
+      REDIS_URL: redis://redis:6379
+      DATABASE_URL: postgresql://relay:relay@postgres:5432/relay
+      MOCK_WORLD_URL: http://mock-world:4101
+      HTTP_ALLOWED_ORIGINS: ${HTTP_ALLOWED_ORIGINS:-}
+      LLM_PROVIDER: ${LLM_PROVIDER:-mock}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      NODE_ENV: production
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      mock-world:
+        condition: service_started
+
+  mock-world:
+    build: .
+    restart: unless-stopped
+    command: ["npm", "run", "start", "--workspace", "@relay/mock-world"]
+    environment:
+      MOCK_WORLD_PORT: 4101
+      DATABASE_URL: postgresql://relay:relay@postgres:5432/relay
+      NODE_ENV: production
+    ports:
+      - "127.0.0.1:4101:4101"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  relay_postgres:

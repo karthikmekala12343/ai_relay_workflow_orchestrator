@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Relay Console</title>
+    <style>
+      :root { color-scheme: light; font-family: Inter, ui-sans-serif, system-ui, sans-serif; background: var(--page-bg); color: var(--text); --page-bg: #f7f8fa; --surface: #fff; --surface-muted: #f8f9fa; --text: #20262d; --text-muted: #707980; --border: #e5e8eb; --control-border: #d8dde2; --control-hover: #f9fbfa; --control-text: #27313a; --pre-text: #39434c; --error: #b42318; --shadow: rgb(24 39 31 / 3%); }
+      :root[data-theme="dark"] { color-scheme: dark; --page-bg: #101318; --surface: #191e25; --surface-muted: #11151b; --text: #edf0f2; --text-muted: #a0a8b1; --border: #303842; --control-border: #424b56; --control-hover: #242b34; --control-text: #edf0f2; --pre-text: #d3dae1; --error: #ff8e86; --shadow: rgb(0 0 0 / 18%); }
+      body { max-width: 1400px; min-height: 100vh; box-sizing: border-box; margin: 0 auto; padding: 2rem 1.25rem; background: var(--page-bg); color: var(--text); }
+      h1 { margin: 0 0 0.35rem; font-size: 1.8rem; font-weight: 650; letter-spacing: -0.035em; }
+      h2 { margin: 0 0 1rem; font-size: 1.15rem; font-weight: 650; }
+      h3 { margin: 1.25rem 0 0.55rem; font-size: 0.95rem; font-weight: 600; }
+      button, select, textarea { font: inherit; }
+      button, select { min-height: 42px; padding: 0.6rem 0.9rem; border: 1px solid var(--control-border); border-radius: 6px; background: var(--surface); color: var(--control-text); cursor: pointer; transition: background-color 120ms ease, border-color 120ms ease, box-shadow 120ms ease; }
+      button:hover, select:hover { border-color: #aeb9b3; background: var(--control-hover); }
+      button:focus-visible, select:focus-visible, textarea:focus-visible { outline: 3px solid rgb(0 181 112 / 22%); outline-offset: 2px; }
+      button.primary { background: #00b574; border-color: #00b574; color: #fff; font-weight: 600; }
+      button.primary:hover { background: #009e65; border-color: #009e65; }
+      button.reject { background: var(--surface); border-color: #e5b8b8; color: #a32828; }
+      button.reject:hover { background: #fff7f7; }
+      textarea { display: block; box-sizing: border-box; width: 100%; min-height: 90px; padding: 0.75rem; border: 1px solid var(--control-border); border-radius: 6px; background: var(--surface); color: var(--text); }
+      .layout { display: grid; grid-template-columns: minmax(280px, 0.85fr) minmax(0, 1.6fr); grid-template-areas: "workflows details" "runs details"; gap: 0 1rem; align-items: start; }
+      .panel { min-width: 0; margin: 0 0 1rem; padding: 1.25rem; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); box-shadow: 0 2px 8px var(--shadow); }
+      .workflows-panel { grid-area: workflows; }
+      .runs-panel { grid-area: runs; }
+      .details-panel { grid-area: details; }
+      .toolbar { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: center; }
+      .toolbar select { flex: 1; min-width: 0; }
+      .workflow-select { display: block; box-sizing: border-box; width: 100%; }
+      .workflow-actions { margin-top: 0.75rem; }
+      .run-list { max-height: 60vh; overflow-y: auto; }
+      .run-item { display: flex; justify-content: space-between; gap: 0.75rem; width: 100%; margin: 0.4rem 0; text-align: left; }
+      .run-item > span:first-child { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .run-status { flex: 0 0 auto; align-self: center; padding: 0.25rem 0.55rem; border: 1px solid var(--status-border); border-radius: 999px; background: var(--status-bg); color: var(--status-text); font-size: 0.72rem; font-weight: 700; letter-spacing: 0.025em; line-height: 1.25; white-space: nowrap; }
+      .status-queued { --status-bg: #ede9fe; --status-border: #c4b5fd; --status-text: #5b21b6; }
+      .status-running { --status-bg: #e0f2fe; --status-border: #7dd3fc; --status-text: #075985; }
+      .status-waiting-for-approval { --status-bg: #fef3c7; --status-border: #fcd34d; --status-text: #854d0e; }
+      .status-succeeded { --status-bg: #dcfce7; --status-border: #86efac; --status-text: #166534; }
+      .status-failed { --status-bg: #fee2e2; --status-border: #fca5a5; --status-text: #991b1b; }
+      .status-cancelled { --status-bg: #f3f4f6; --status-border: #d1d5db; --status-text: #4b5563; }
+      :root[data-theme="dark"] .status-queued { --status-bg: #302454; --status-border: #6d55a8; --status-text: #ddd6fe; }
+      :root[data-theme="dark"] .status-running { --status-bg: #102e42; --status-border: #17658a; --status-text: #bae6fd; }
+      :root[data-theme="dark"] .status-waiting-for-approval { --status-bg: #3a2d12; --status-border: #80621b; --status-text: #fde68a; }
+      :root[data-theme="dark"] .status-succeeded { --status-bg: #123321; --status-border: #247746; --status-text: #bbf7d0; }
+      :root[data-theme="dark"] .status-failed { --status-bg: #3b1c20; --status-border: #8f333b; --status-text: #fecaca; }
+      :root[data-theme="dark"] .status-cancelled { --status-bg: #292d33; --status-border: #505761; --status-text: #d1d5db; }
+      pre { max-height: 38vh; overflow: auto; padding: 1rem; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-muted); color: var(--pre-text); white-space: pre-wrap; overflow-wrap: anywhere; font-size: 0.85rem; }
+      #error { color: var(--error); min-height: 1.4rem; }
+      .muted { color: var(--text-muted); }
+      .page-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; margin-bottom: 1rem; }
+      .page-header p { margin: 0.35rem 0 0; }
+      .theme-toggle { flex: 0 0 auto; }
+      :root[data-theme="dark"] button.reject { border-color: #754747; color: #ffaaa4; }
+      :root[data-theme="dark"] button.reject:hover { background: #302022; }
+      @media (max-width: 900px) {
+        .layout { grid-template-columns: minmax(0, 1fr); grid-template-areas: "workflows" "runs" "details"; }
+        .run-list { max-height: 40vh; }
+        pre { max-height: 32vh; }
+      }
+      @media (max-width: 520px) {
+        body { padding: 1.25rem 0.75rem; }
+        h1 { font-size: 1.55rem; }
+        .panel { padding: 1rem; }
+        .workflow-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .workflow-actions button { width: 100%; }
+        #runButton, #approvalActions button { width: 100%; }
+        #approvalActions { display: grid; grid-template-columns: 1fr 1fr; }
+        .run-item { align-items: flex-start; gap: 0.5rem; padding: 0.6rem; }
+        .run-item > span:first-child { white-space: normal; overflow-wrap: anywhere; }
+        .run-item strong { font-size: 0.75rem; }
+        pre { padding: 0.75rem; font-size: 0.78rem; }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="page-header">
+      <div>
+        <h1>Relay Console</h1>
+        <p class="muted">Create workflows, trigger runs, inspect traces, and resolve approval gates.</p>
+      </div>
+      <button class="theme-toggle" id="themeToggle" type="button" aria-label="Switch to dark theme">Dark theme</button>
+    </header>
+    <div id="error" role="alert"></div>
+
+    <div class="layout">
+      <section class="panel workflows-panel">
+        <h2>Workflows</h2>
+        <select class="workflow-select" id="workflowSelect" aria-label="Select workflow"></select>
+        <p id="workflowNotice" class="muted" role="status"></p>
+        <h3>Trigger input (JSON)</h3>
+        <textarea id="inputEditor">{}</textarea>
+        <p><button class="primary" id="runButton">Start run</button></p>
+        <div class="toolbar workflow-actions">
+          <button id="publishButton" class="primary" hidden>Publish workflow</button>
+          <button id="refreshButton">Refresh</button>
+          <button id="createButton">Create demo flow</button>
+        </div>
+      </section>
+
+      <section class="panel runs-panel">
+        <h2>Recent runs</h2>
+        <p class="muted">Latest 10 runs</p>
+        <div id="runs" class="run-list" aria-live="polite"></div>
+      </section>
+
+      <section class="panel details-panel">
+        <h2>Run details</h2>
+        <p id="runSummary" class="muted">Select a run to view its steps and traces.</p>
+        <div id="approvalActions" class="toolbar"></div>
+        <h3>Steps</h3>
+        <pre id="stepsOutput"></pre>
+        <h3>Traces</h3>
+        <pre id="tracesOutput"></pre>
+      </section>
+    </div>
+
+    <script>
+      const byId = (id) => document.getElementById(id);
+      const root = document.documentElement;
+      const themeToggle = byId('themeToggle');
+      const savedTheme = localStorage.getItem('relay-console-theme');
+      root.dataset.theme = savedTheme === 'dark' ? 'dark' : 'light';
+      function updateThemeToggle() {
+        const isDark = root.dataset.theme === 'dark';
+        themeToggle.textContent = isDark ? 'Light theme' : 'Dark theme';
+        themeToggle.setAttribute('aria-label', `Switch to ${isDark ? 'light' : 'dark'} theme`);
+        themeToggle.setAttribute('aria-pressed', String(isDark));
+      }
+      themeToggle.addEventListener('click', () => {
+        root.dataset.theme = root.dataset.theme === 'dark' ? 'light' : 'dark';
+        localStorage.setItem('relay-console-theme', root.dataset.theme);
+        updateThemeToggle();
+      });
+      updateThemeToggle();
+      let workflows = [];
+      let runs = [];
+      let selectedRunId = '';
+      let workflowSignature;
+      let runSignature;
+      let selectedRunSignature = '';
+
+      function updateWorkflowControls() {
+        const workflow = workflows.find((item) => item.id === byId('workflowSelect').value);
+        const isDraft = workflow?.status === 'DRAFT';
+        byId('publishButton').hidden = !isDraft;
+        byId('runButton').disabled = isDraft || !workflow;
+        byId('workflowNotice').textContent = isDraft
+          ? 'Draft workflows can be edited but must be published before they can run.'
+          : workflow ? 'Published workflow definitions are immutable.' : '';
+      }
+
+      async function request(url, options) {
+        const headers = new Headers(options?.headers);
+        let token = sessionStorage.getItem('relay-api-token');
+        if (token) {
+          headers.set('Authorization', `Bearer ${token}`);
+        }
+        let response = await fetch(url, { ...options, headers });
+        if (response.status === 401) {
+          token = window.prompt('Enter the Relay API token to continue:');
+          if (!token) {
+            throw new Error('A Relay API token is required.');
+          }
+          sessionStorage.setItem('relay-api-token', token);
+          headers.set('Authorization', `Bearer ${token}`);
+          response = await fetch(url, { ...options, headers });
+        }
+        const body = await response.json();
+        if (!response.ok) {
+          throw new Error(body.error || `Request failed (${response.status})`);
+        }
+        return body;
+      }
+
+      function showError(error) {
+        byId('error').textContent = error instanceof Error ? error.message : String(error);
+      }
+
+      function renderWorkflows(selectedId) {
+        const select = byId('workflowSelect');
+        const signature = workflows.map((workflow) => `${workflow.id}:${workflow.name}:${workflow.status}`).join('|');
+        if (signature === workflowSignature) {
+          updateWorkflowControls();
+          return;
+        }
+        workflowSignature = signature;
+        const currentId = selectedId || select.value;
+        select.replaceChildren();
+        workflows.forEach((workflow) => {
+          const option = document.createElement('option');
+          option.value = workflow.id;
+          option.textContent = `${workflow.name} (${workflow.status}) · ${workflow.id}`;
+          select.append(option);
+        });
+        if (currentId && workflows.some((workflow) => workflow.id === currentId)) {
+          select.value = currentId;
+        }
+        updateWorkflowControls();
+      }
+
+      function renderRuns() {
+        const list = byId('runs');
+        const recentRuns = runs.slice(0, 10);
+        const signature = recentRuns.map((run) => `${run.id}:${run.status}`).join('|');
+        if (signature === runSignature) {
+          return;
+        }
+        runSignature = signature;
+        list.replaceChildren();
+        recentRuns.forEach((run) => {
+          const button = document.createElement('button');
+          button.className = 'run-item';
+          const title = document.createElement('span');
+          title.textContent = `${run.workflow.name} · ${run.id}`;
+          const status = document.createElement('span');
+          status.className = `run-status status-${run.status.toLowerCase().replaceAll('_', '-')}`;
+          status.setAttribute('aria-label', `Status: ${run.status.replaceAll('_', ' ')}`);
+          status.textContent = run.status;
+          button.append(title, status);
+          button.addEventListener('click', () => loadRun(run.id));
+          list.append(button);
+        });
+        if (runs.length === 0) {
+          list.textContent = 'No runs yet.';
+        }
+      }
+
+      async function refresh(selectedWorkflowId) {
+        const [workflowResponse, runResponse] = await Promise.all([
+          request('/api/workflows'),
+          request('/api/runs'),
+        ]);
+        workflows = workflowResponse.workflows;
+        runs = runResponse.runs;
+        renderWorkflows(selectedWorkflowId || byId('workflowSelect').value);
+        renderRuns();
+      }
+
+      async function loadRun(runId) {
+        const response = await request(`/api/runs/${runId}`);
+        const run = response.run;
+        const signature = `${run.id}:${run.status}:${run.updatedAt}`;
+        selectedRunId = runId;
+        if (signature === selectedRunSignature) {
+          return;
+        }
+        selectedRunSignature = signature;
+        byId('runSummary').textContent = `${run.workflow.name} · ${run.id} · ${run.status}`;
+        byId('stepsOutput').textContent = JSON.stringify(run.steps, null, 2);
+        byId('tracesOutput').textContent = JSON.stringify(run.traces, null, 2);
+
+        const actions = byId('approvalActions');
+        actions.replaceChildren();
+        if (run.status === 'WAITING_FOR_APPROVAL') {
+          const approve = document.createElement('button');
+          approve.className = 'primary';
+          approve.textContent = 'Approve';
+          approve.addEventListener('click', () => decide(run.id, true));
+          const reject = document.createElement('button');
+          reject.className = 'reject';
+          reject.textContent = 'Reject';
+          reject.addEventListener('click', () => decide(run.id, false));
+          actions.append(approve, reject);
+        }
+      }
+
+      async function decide(runId, approved) {
+        try {
+          await request(`/api/runs/${runId}/approve`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ approved }),
+          });
+          await refresh(byId('workflowSelect').value);
+          await loadRun(runId);
+        } catch (error) {
+          showError(error);
+        }
+      }
+
+      byId('refreshButton').addEventListener('click', async () => {
+        try {
+          await refresh(byId('workflowSelect').value);
+          showError('');
+        } catch (error) {
+          showError(error);
+        }
+      });
+
+      byId('workflowSelect').addEventListener('change', updateWorkflowControls);
+
+      byId('publishButton').addEventListener('click', async () => {
+        const workflowId = byId('workflowSelect').value;
+        if (!workflowId) {
+          return;
+        }
+        try {
+          await request(`/api/workflows/${workflowId}/publish`, { method: 'POST' });
+          await refresh(workflowId);
+          showError('');
+        } catch (error) {
+          showError(error);
+        }
+      });
+
+      byId('createButton').addEventListener('click', async () => {
+        const id = `wf-${crypto.randomUUID()}`;
+        const workflow = {
+          id,
+          name: 'Console approval demo',
+          maxSteps: 10,
+          nodes: [
+            { id: 'start', type: 'notify', label: 'Start', args: { message: 'Started' }, nextNodeId: 'approval' },
+            { id: 'approval', type: 'approval', label: 'Review', args: { message: 'Approve this run' }, nextNodeId: 'finish' },
+            { id: 'finish', type: 'notify', label: 'Finish', args: { message: 'Approved' } },
+          ],
+        };
+        try {
+          await request('/api/workflows', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(workflow),
+          });
+          await refresh(id);
+          showError('');
+        } catch (error) {
+          showError(error);
+        }
+      });
+
+      byId('runButton').addEventListener('click', async () => {
+        const workflowId = byId('workflowSelect').value;
+        if (!workflowId) {
+          showError('Create or select a workflow first.');
+          return;
+        }
+        try {
+          const input = JSON.parse(byId('inputEditor').value);
+          const result = await request(`/api/workflows/${workflowId}/run`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ input }),
+          });
+          await refresh(workflowId);
+          await loadRun(result.run.id);
+          showError('');
+        } catch (error) {
+          showError(error);
+        }
+      });
+
+      refresh().catch(showError);
+      window.setInterval(async () => {
+        try {
+          await refresh(byId('workflowSelect').value);
+          if (selectedRunId) {
+            await loadRun(selectedRunId);
+          }
+        } catch (error) {
+          showError(error);
+        }
+      }, 5000);
+    </script>
+  </body>
+</html>

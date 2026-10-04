@@ -1,0 +1,864 @@
+openapi: 3.1.0
+info:
+  title: Relay AI Workflow Orchestrator API
+  version: 0.1.0
+  summary: API for authoring, publishing, triggering, and observing durable AI workflows.
+  description: |
+    OpenAPI description for the Relay REST API and local Mock World inspection
+    endpoints.
+
+    API bearer authentication is enforced when `RELAY_API_TOKEN` is configured.
+    Local development defaults to no API token. Webhook requests use the
+    workflow-specific `x-relay-webhook-secret` header instead.
+
+    Workflow definitions are mutable only while in `DRAFT`. Publishing validates
+    the graph and makes the definition immutable. Every run executes its stored
+    `workflowSnapshot`.
+  contact:
+    name: Relay API
+  license:
+    name: Proprietary
+    identifier: LicenseRef-Proprietary
+
+servers:
+  - url: http://localhost:4000
+    description: Local Relay API
+
+tags:
+  - name: Health
+    description: Liveness and service status endpoints.
+  - name: Workflows
+    description: Create, validate, publish, and inspect immutable workflow definitions.
+  - name: Runs
+    description: Start executions, inspect durable state, and make approval decisions.
+  - name: Webhooks
+    description: Trigger a published workflow using its workflow-specific secret.
+  - name: Mock World
+    description: Local mock downstream health and idempotent effect inspection.
+
+security:
+  - ApiBearerAuth: []
+
+paths:
+  /health:
+    get:
+      tags: [Health]
+      operationId: getApiHealth
+      summary: Check API health
+      security: []
+      responses:
+        "200":
+          description: API process is responding.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHealth"
+              example:
+                ok: true
+                service: relay-api
+                environment: development
+
+  /api/workflows:
+    get:
+      tags: [Workflows]
+      operationId: listWorkflows
+      summary: List workflows
+      responses:
+        "200":
+          description: Workflows ordered newest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, workflows]
+                properties:
+                  ok:
+                    const: true
+                  workflows:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Workflow"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [Workflows]
+      operationId: createWorkflow
+      summary: Create a workflow draft
+      description: |
+        Creates a workflow in `DRAFT` status. `webhookSecret`, if provided, must
+        be at least 16 characters. The secret is stored as a hash and is not
+        included in workflow responses. Node identifiers must be unique and all
+        graph targets must refer to existing nodes.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateWorkflowRequest"
+            example:
+              name: Protected payment demo
+              description: Requires approval before the mock HTTP action.
+              maxSteps: 10
+              webhookSecret: replace-with-a-secret-at-least-16-chars
+              nodes:
+                - id: payment
+                  type: http_request
+                  label: Create payment
+                  args:
+                    requiresApproval: true
+                    approvalMessage: Approve payment for {{input.customer}}
+      responses:
+        "201":
+          description: Draft workflow created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkflowResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/workflows/{workflowId}:
+    parameters:
+      - $ref: "#/components/parameters/WorkflowId"
+    get:
+      tags: [Workflows]
+      operationId: getWorkflow
+      summary: Get a workflow
+      responses:
+        "200":
+          description: Workflow found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkflowResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [Workflows]
+      operationId: updateWorkflow
+      summary: Replace a draft workflow definition
+      description: Published workflows are immutable. The request replaces the draft's name, description, step limit, nodes, and (if supplied) webhook secret.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateWorkflowRequest"
+      responses:
+        "200":
+          description: Draft updated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkflowResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Workflow is published or changed concurrently.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      tags: [Workflows]
+      operationId: deleteWorkflow
+      summary: Delete an unused draft
+      description: Only drafts with no run history can be deleted.
+      responses:
+        "204":
+          description: Workflow deleted.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Published workflow or workflow has run history.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/workflows/{workflowId}/publish:
+    parameters:
+      - $ref: "#/components/parameters/WorkflowId"
+    post:
+      tags: [Workflows]
+      operationId: publishWorkflow
+      summary: Validate and publish a draft
+      description: Validates node IDs, graph targets, and protected HTTP-action configuration. Published workflows cannot be edited or deleted.
+      responses:
+        "200":
+          description: Workflow published.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkflowResponse"
+        "400":
+          description: Workflow graph failed validation.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Workflow is already published or changed during publication.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/workflows/{workflowId}/run:
+    parameters:
+      - $ref: "#/components/parameters/WorkflowId"
+    post:
+      tags: [Runs]
+      operationId: startWorkflowRun
+      summary: Queue a manual workflow run
+      description: Only published workflows can be run. The API stores a workflow snapshot and initializes run steps before queueing execution.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RunRequest"
+            example:
+              trigger: manual
+              input:
+                customer: Demo Customer
+                amount: 42
+      responses:
+        "202":
+          description: Run created and queued.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunCreatedResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Workflow is not published or stored graph data is invalid.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/runs:
+    get:
+      tags: [Runs]
+      operationId: listRuns
+      summary: List workflow runs
+      responses:
+        "200":
+          description: Runs ordered newest first, with workflow and step summaries.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, runs]
+                properties:
+                  ok:
+                    const: true
+                  runs:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/RunListItem"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/runs/{runId}:
+    parameters:
+      - $ref: "#/components/parameters/RunId"
+    get:
+      tags: [Runs]
+      operationId: getRun
+      summary: Get run details
+      description: Includes the workflow snapshot, step results, traces, and approval records.
+      responses:
+        "200":
+          description: Run found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunDetailResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/runs/{runId}/approve:
+    parameters:
+      - $ref: "#/components/parameters/RunId"
+    post:
+      tags: [Runs]
+      operationId: decideRunApproval
+      summary: Approve or reject the current approval gate
+      description: |
+        The run must be `WAITING_FOR_APPROVAL` at an approval node or protected
+        HTTP node. Approval of a protected HTTP node resumes that same node.
+        Approval of a regular approval node advances to its configured next node.
+        Rejection marks the run `CANCELLED`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApprovalDecisionRequest"
+            examples:
+              approve:
+                value:
+                  approved: true
+                  message: Approved for the demo
+              reject:
+                value:
+                  approved: false
+                  message: Rejected by reviewer
+      responses:
+        "200":
+          description: Approval decision recorded.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApprovalDecisionResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Run is not waiting for approval, node is not an approval gate, or the decision was already recorded.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/webhooks/{workflowId}:
+    parameters:
+      - $ref: "#/components/parameters/WorkflowId"
+    post:
+      tags: [Webhooks]
+      operationId: triggerWorkflowWebhook
+      summary: Trigger a published workflow by webhook
+      description: |
+        Requires the workflow-specific `x-relay-webhook-secret`. This route does
+        not use the API bearer token. The JSON request body is stored as the run
+        input and the current published definition is snapshotted.
+      security: []
+      parameters:
+        - name: x-relay-webhook-secret
+          in: header
+          required: true
+          description: Raw webhook secret configured when the workflow was created. Relay stores only its SHA-256 hash.
+          schema:
+            type: string
+            minLength: 16
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+            example:
+              source: postman
+              event: customer.created
+              customer:
+                id: demo-123
+                tier: gold
+      responses:
+        "202":
+          description: Webhook accepted and run queued.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WebhookAcceptedResponse"
+        "401":
+          description: Webhook secret is missing or invalid.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Workflow is not published or stored graph data is invalid.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /mock/health:
+    get:
+      tags: [Mock World]
+      operationId: getMockWorldHealth
+      summary: Check Mock World health
+      description: Local Mock World service endpoint on port 4101.
+      servers:
+        - url: http://localhost:4101
+          description: Local Mock World
+      security: []
+      responses:
+        "200":
+          description: Mock World is responding, including its stored effect count.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, service, calls]
+                properties:
+                  ok:
+                    const: true
+                  service:
+                    const: relay-mock-world
+                  calls:
+                    type: integer
+                    minimum: 0
+
+  /mock/traces:
+    get:
+      tags: [Mock World]
+      operationId: listMockEffects
+      summary: List stored mock effects
+      description: Local Mock World inspection endpoint on port 4101.
+      servers:
+        - url: http://localhost:4101
+          description: Local Mock World
+      security: []
+      responses:
+        "200":
+          description: Mock effects ordered oldest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, traces]
+                properties:
+                  ok:
+                    const: true
+                  traces:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/MockEffect"
+
+components:
+  securitySchemes:
+    ApiBearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque
+      description: Optional in local development; enforced when RELAY_API_TOKEN is configured.
+  parameters:
+    WorkflowId:
+      name: workflowId
+      in: path
+      required: true
+      schema:
+        type: string
+      example: workflow-demo-123
+    RunId:
+      name: runId
+      in: path
+      required: true
+      schema:
+        type: string
+      example: run-demo-123
+  responses:
+    BadRequest:
+      description: Request body or workflow definition failed validation.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ValidationErrorResponse"
+    Unauthorized:
+      description: Missing or invalid Relay API bearer token.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    NotFound:
+      description: Requested workflow or run was not found.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+  schemas:
+    ApiHealth:
+      type: object
+      required: [ok, service, environment]
+      properties:
+        ok:
+          const: true
+        service:
+          const: relay-api
+        environment:
+          type: string
+
+    WorkflowNode:
+      type: object
+      required: [id, type, label]
+      properties:
+        id:
+          type: string
+          minLength: 1
+        type:
+          type: string
+          enum: [http_request, condition, delay, notify, llm, approval]
+        label:
+          type: string
+          minLength: 1
+        args:
+          type: object
+          additionalProperties: true
+          description: Node-type-specific arguments, including optional template expressions.
+        nextNodeId:
+          type: string
+
+    CreateWorkflowRequest:
+      type: object
+      required: [name, nodes]
+      properties:
+        id:
+          type: string
+          minLength: 1
+        name:
+          type: string
+          minLength: 1
+        description:
+          type: string
+        webhookSecret:
+          type: string
+          minLength: 16
+          writeOnly: true
+        maxSteps:
+          type: integer
+          minimum: 1
+          maximum: 1000
+          default: 50
+          description: Environment-configured ceiling is between 1 and 1000; the default workflow value is at most 50.
+        nodes:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/WorkflowNode"
+
+    UpdateWorkflowRequest:
+      allOf:
+        - $ref: "#/components/schemas/CreateWorkflowRequest"
+        - type: object
+          required: [name, nodes]
+          description: The workflow ID is optional but, if supplied, must match the path ID.
+
+    Workflow:
+      type: object
+      required: [id, name, status, publishedAt, maxSteps, nodes, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: [string, "null"]
+        status:
+          type: string
+          enum: [DRAFT, PUBLISHED]
+        publishedAt:
+          type: [string, "null"]
+          format: date-time
+        maxSteps:
+          type: integer
+        nodes:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkflowNode"
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      additionalProperties: true
+      description: Webhook secret and its stored hash are never returned.
+
+    WorkflowResponse:
+      type: object
+      required: [ok, workflow]
+      properties:
+        ok:
+          const: true
+        workflow:
+          $ref: "#/components/schemas/Workflow"
+
+    RunRequest:
+      type: object
+      properties:
+        trigger:
+          type: string
+          default: manual
+        input:
+          type: object
+          additionalProperties: true
+
+    RunStep:
+      type: object
+      required: [id, runId, nodeId, label, status, attempts, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+        runId:
+          type: string
+        nodeId:
+          type: string
+        label:
+          type: string
+        status:
+          type: string
+          enum: [PENDING, RUNNING, SUCCEEDED, FAILED]
+        attempts:
+          type: integer
+          minimum: 0
+        input:
+          type: [object, array, string, number, boolean, "null"]
+        output:
+          type: [object, array, string, number, boolean, "null"]
+        startedAt:
+          type: [string, "null"]
+          format: date-time
+        finishedAt:
+          type: [string, "null"]
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      additionalProperties: true
+
+    WorkflowSnapshot:
+      type: object
+      required: [id, name, maxSteps, nodes]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: [string, "null"]
+        maxSteps:
+          type: integer
+        nodes:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkflowNode"
+      additionalProperties: true
+
+    Run:
+      type: object
+      required: [id, workflowId, status, maxSteps, stepsExecuted, workflowSnapshot, startedAt, updatedAt]
+      properties:
+        id:
+          type: string
+        workflowId:
+          type: string
+        status:
+          type: string
+          enum: [QUEUED, RUNNING, WAITING_FOR_APPROVAL, SUCCEEDED, FAILED, CANCELLED]
+        currentNodeId:
+          type: [string, "null"]
+        maxSteps:
+          type: integer
+        stepsExecuted:
+          type: integer
+        createdInput:
+          type: [object, array, string, number, boolean, "null"]
+        workflowSnapshot:
+          $ref: "#/components/schemas/WorkflowSnapshot"
+        startedAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: [string, "null"]
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        steps:
+          type: array
+          items:
+            $ref: "#/components/schemas/RunStep"
+        workflow:
+          $ref: "#/components/schemas/Workflow"
+      additionalProperties: true
+
+    RunListItem:
+      allOf:
+        - $ref: "#/components/schemas/Run"
+        - type: object
+          required: [workflow, steps]
+
+    Trace:
+      type: object
+      required: [id, runId, nodeId, event, createdAt]
+      properties:
+        id:
+          type: string
+        runId:
+          type: string
+        nodeId:
+          type: string
+        event:
+          type: string
+        payload:
+          type: [object, array, string, number, boolean, "null"]
+        latencyMs:
+          type: [integer, "null"]
+        tokenCount:
+          type: [integer, "null"]
+        createdAt:
+          type: string
+          format: date-time
+      additionalProperties: true
+
+    Approval:
+      type: object
+      required: [id, runId, nodeId, status, createdAt]
+      properties:
+        id:
+          type: string
+        runId:
+          type: string
+        nodeId:
+          type: string
+        message:
+          type: [string, "null"]
+        status:
+          type: string
+          enum: [PENDING, APPROVED, REJECTED]
+        decision:
+          type: [string, "null"]
+        createdAt:
+          type: string
+          format: date-time
+        resolvedAt:
+          type: [string, "null"]
+          format: date-time
+      additionalProperties: true
+
+    RunDetail:
+      allOf:
+        - $ref: "#/components/schemas/Run"
+        - type: object
+          required: [workflow, steps, traces, approvals]
+          properties:
+            traces:
+              type: array
+              items:
+                $ref: "#/components/schemas/Trace"
+            approvals:
+              type: array
+              items:
+                $ref: "#/components/schemas/Approval"
+
+    RunCreatedResponse:
+      type: object
+      required: [ok, run]
+      properties:
+        ok:
+          const: true
+        run:
+          $ref: "#/components/schemas/Run"
+
+    RunDetailResponse:
+      type: object
+      required: [ok, run]
+      properties:
+        ok:
+          const: true
+        run:
+          $ref: "#/components/schemas/RunDetail"
+
+    ApprovalDecisionRequest:
+      type: object
+      required: [approved]
+      properties:
+        approved:
+          type: boolean
+        message:
+          type: string
+
+    ApprovalDecisionResponse:
+      type: object
+      required: [ok, approval, run]
+      properties:
+        ok:
+          const: true
+        approval:
+          $ref: "#/components/schemas/Approval"
+        run:
+          $ref: "#/components/schemas/Run"
+
+    WebhookAcceptedResponse:
+      type: object
+      required: [ok, workflowId, runId, message]
+      properties:
+        ok:
+          const: true
+        workflowId:
+          type: string
+        runId:
+          type: string
+        message:
+          type: string
+
+    MockEffect:
+      type: object
+      required: [id, key, response, createdAt]
+      properties:
+        id:
+          type: string
+        key:
+          type: string
+        response:
+          type: [object, array, string, number, boolean, "null"]
+        createdAt:
+          type: string
+          format: date-time
+
+    ErrorResponse:
+      type: object
+      required: [ok, error]
+      properties:
+        ok:
+          const: false
+        error:
+          type: string
+      additionalProperties: true
+
+    ValidationErrorResponse:
+      type: object
+      required: [ok]
+      properties:
+        ok:
+          const: false
+        error:
+          type: string
+        errors:
+          description: Zod validation details; shape varies by rejected request.
+          type: object
+          additionalProperties: true
+      additionalProperties: true

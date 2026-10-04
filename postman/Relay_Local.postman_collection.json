@@ -1,0 +1,865 @@
+{
+  "info": {
+    "_postman_id": "b9256e3b-2f41-4d75-9f58-7fb0d79f1026",
+    "name": "Relay AI Workflow Orchestrator - Local",
+    "description": "Local API collection for Relay. Matching Redocly/OpenAPI 3.1 contract: ../openapi.yaml (Redocly config: ../redocly.yaml). Start the Docker Compose stack first. Run requests in order within each folder. Workflow and run IDs are captured automatically. For approval requests, repeatedly call Get run details until status is WAITING_FOR_APPROVAL before approving/rejecting. Local default: http://localhost:4000; Mock World: http://localhost:4101.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{apiToken}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:4000"
+    },
+    {
+      "key": "mockWorldUrl",
+      "value": "http://localhost:4101"
+    },
+    {
+      "key": "apiToken",
+      "value": ""
+    },
+    {
+      "key": "workflowId",
+      "value": ""
+    },
+    {
+      "key": "runId",
+      "value": ""
+    },
+    {
+      "key": "rejectionRunId",
+      "value": ""
+    },
+    {
+      "key": "webhookWorkflowId",
+      "value": ""
+    },
+    {
+      "key": "webhookRunId",
+      "value": ""
+    },
+    {
+      "key": "webhookSecret",
+      "value": "relay-demo-secret-change-me"
+    },
+    {
+      "key": "schemaWorkflowId",
+      "value": ""
+    },
+    {
+      "key": "schemaRunId",
+      "value": ""
+    },
+    {
+      "key": "stepCapWorkflowId",
+      "value": ""
+    },
+    {
+      "key": "stepCapRunId",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "01 - Health",
+      "item": [
+        {
+          "name": "API health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/health",
+            "description": "Confirms the Relay API process is responding."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('API is healthy', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().service).to.eql('relay-api');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Mock World health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "auth": {
+              "type": "noauth"
+            },
+            "url": "{{mockWorldUrl}}/health",
+            "description": "Confirms the mock downstream service is responding."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Mock World is healthy', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().service).to.eql('relay-mock-world');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "02 - Workflow lifecycle and approval demo",
+      "item": [
+        {
+          "name": "Create approval-gated draft",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Postman protected-action demo\",\n  \"description\": \"Calls Mock World only after a human approves the action.\",\n  \"maxSteps\": 10,\n  \"nodes\": [\n    {\n      \"id\": \"protected-effect\",\n      \"type\": \"http_request\",\n      \"label\": \"Create protected mock effect\",\n      \"args\": {\n        \"requiresApproval\": true,\n        \"approvalMessage\": \"Approve the requested action for {{input.customer}}\"\n      }\n    }\n  ]\n}"
+            },
+            "url": "{{baseUrl}}/api/workflows",
+            "description": "Creates a new DRAFT. The API generates the workflow ID; the test script stores it as workflowId."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Draft created', function () {",
+                  "  pm.response.to.have.status(201);",
+                  "  var body = pm.response.json();",
+                  "  pm.expect(body.workflow.status).to.eql('DRAFT');",
+                  "  pm.collectionVariables.set('workflowId', body.workflow.id);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Attempt to run draft (expect 409)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"input\": { \"customer\": \"Postman Demo Customer\", \"amount\": 42 }\n}"
+            },
+            "url": "{{baseUrl}}/api/workflows/{{workflowId}}/run",
+            "description": "Negative lifecycle check: a draft must not run."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Draft cannot run', function () {",
+                  "  pm.response.to.have.status(409);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Publish workflow",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            },
+            "url": "{{baseUrl}}/api/workflows/{{workflowId}}/publish",
+            "description": "Validates the graph and transitions the workflow to PUBLISHED."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Workflow published', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().workflow.status).to.eql('PUBLISHED');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Edit published workflow (expect 409)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Should not update published graph\",\n  \"maxSteps\": 10,\n  \"nodes\": [\n    {\n      \"id\": \"protected-effect\",\n      \"type\": \"http_request\",\n      \"label\": \"Create protected mock effect\",\n      \"args\": { \"requiresApproval\": true }\n    }\n  ]\n}"
+            },
+            "url": "{{baseUrl}}/api/workflows/{{workflowId}}",
+            "description": "Negative immutability check: published definitions cannot be changed."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Published workflow is immutable', function () {",
+                  "  pm.response.to.have.status(409);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List workflows",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/workflows"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Workflow list returned', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().workflows).to.be.an('array');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get workflow",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/workflows/{{workflowId}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Published workflow returned', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().workflow.status).to.eql('PUBLISHED');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "03 - Manual run and approval",
+      "item": [
+        {
+          "name": "Start manual run",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"trigger\": \"manual\",\n  \"input\": {\n    \"customer\": \"Postman Demo Customer\",\n    \"amount\": 42\n  }\n}"
+            },
+            "url": "{{baseUrl}}/api/workflows/{{workflowId}}/run",
+            "description": "Queues a run and saves the returned run ID. The worker should pause at the protected HTTP node."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Run queued', function () {",
+                  "  pm.response.to.have.status(202);",
+                  "  var body = pm.response.json();",
+                  "  pm.expect(body.run.id).to.be.a('string');",
+                  "  pm.collectionVariables.set('runId', body.run.id);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get run details (repeat until waiting)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/runs/{{runId}}",
+            "description": "Repeat until run.status is WAITING_FOR_APPROVAL. Confirm the pending approval message includes the customer. Before approval, Mock World should not contain this run's effect."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Run details returned', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().run.workflowSnapshot.nodes).to.be.an('array');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Approve run",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"approved\": true,\n  \"message\": \"Approved from Postman demo\"\n}"
+            },
+            "url": "{{baseUrl}}/api/runs/{{runId}}/approve",
+            "description": "Send only after Get run details shows WAITING_FOR_APPROVAL. Approval resumes the same protected HTTP node."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Approval accepted', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().approval.status).to.eql('APPROVED');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get approved run",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/runs/{{runId}}",
+            "description": "Repeat until status is SUCCEEDED. Inspect steps and traces for the protected call."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Run query succeeded', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().run.id).to.eql(pm.collectionVariables.get('runId'));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Start second run for rejection scenario",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"input\": { \"customer\": \"Reject Demo Customer\", \"amount\": 9 }\n}"
+            },
+            "url": "{{baseUrl}}/api/workflows/{{workflowId}}/run",
+            "description": "Creates a separate run so approval rejection can be demonstrated without modifying the approved example."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Second run queued', function () {",
+                  "  pm.response.to.have.status(202);",
+                  "  pm.collectionVariables.set('rejectionRunId', pm.response.json().run.id);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get rejection run (repeat until waiting)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/runs/{{rejectionRunId}}"
+          }
+        },
+        {
+          "name": "Reject protected action",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"approved\": false,\n  \"message\": \"Rejected from Postman demo\"\n}"
+            },
+            "url": "{{baseUrl}}/api/runs/{{rejectionRunId}}/approve",
+            "description": "Send only when the second run is WAITING_FOR_APPROVAL. Expected run outcome is CANCELLED."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Rejection accepted', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().approval.status).to.eql('REJECTED');",
+                  "  pm.expect(pm.response.json().run.status).to.eql('CANCELLED');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "04 - Webhook trigger",
+      "item": [
+        {
+          "name": "Create webhook draft",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Postman webhook demo\",\n  \"description\": \"Authenticated webhook trigger example.\",\n  \"webhookSecret\": \"{{webhookSecret}}\",\n  \"nodes\": [\n    {\n      \"id\": \"webhook-notify\",\n      \"type\": \"notify\",\n      \"label\": \"Webhook received\",\n      \"args\": { \"message\": \"Webhook run accepted\" }\n    }\n  ]\n}"
+            },
+            "url": "{{baseUrl}}/api/workflows",
+            "description": "Creates a webhook workflow. The raw secret is stored only as a hash by Relay; keep the collection variable private."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Webhook workflow created as draft', function () {",
+                  "  pm.response.to.have.status(201);",
+                  "  var body = pm.response.json();",
+                  "  pm.expect(body.workflow.status).to.eql('DRAFT');",
+                  "  pm.collectionVariables.set('webhookWorkflowId', body.workflow.id);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Publish webhook workflow",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            },
+            "url": "{{baseUrl}}/api/workflows/{{webhookWorkflowId}}/publish"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Webhook workflow published', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().workflow.status).to.eql('PUBLISHED');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Webhook with invalid secret (expect 401)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-relay-webhook-secret",
+                "value": "incorrect-secret"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"source\": \"postman\" }"
+            },
+            "url": "{{baseUrl}}/api/webhooks/{{webhookWorkflowId}}",
+            "description": "Negative authentication check."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Invalid webhook secret rejected', function () {",
+                  "  pm.response.to.have.status(401);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Trigger webhook with valid secret",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-relay-webhook-secret",
+                "value": "{{webhookSecret}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"source\": \"postman\",\n  \"event\": \"customer.created\",\n  \"customer\": { \"id\": \"demo-123\", \"tier\": \"gold\" }\n}"
+            },
+            "url": "{{baseUrl}}/api/webhooks/{{webhookWorkflowId}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Webhook accepted', function () {",
+                  "  pm.response.to.have.status(202);",
+                  "  pm.collectionVariables.set('webhookRunId', pm.response.json().runId);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get webhook-triggered run",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/runs/{{webhookRunId}}",
+            "description": "Repeat until status is SUCCEEDED."
+          }
+        }
+      ]
+    },
+    {
+      "name": "05 - AI schema and step-cap checks",
+      "item": [
+        {
+          "name": "Create invalid mock LLM draft",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Postman invalid LLM schema demo\",\n  \"nodes\": [\n    {\n      \"id\": \"invalid-llm\",\n      \"type\": \"llm\",\n      \"label\": \"Return a number where a string is required\",\n      \"args\": {\n        \"mockResponse\": 7,\n        \"schema\": { \"type\": \"string\" }\n      }\n    }\n  ]\n}"
+            },
+            "url": "{{baseUrl}}/api/workflows"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Invalid-schema workflow created', function () {",
+                  "  pm.response.to.have.status(201);",
+                  "  pm.collectionVariables.set('schemaWorkflowId', pm.response.json().workflow.id);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Publish invalid-schema workflow",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            },
+            "url": "{{baseUrl}}/api/workflows/{{schemaWorkflowId}}/publish"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Schema demo published', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Run invalid-schema workflow",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            },
+            "url": "{{baseUrl}}/api/workflows/{{schemaWorkflowId}}/run"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Invalid-schema run queued', function () {",
+                  "  pm.response.to.have.status(202);",
+                  "  pm.collectionVariables.set('schemaRunId', pm.response.json().run.id);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Inspect invalid-schema run (expect FAILED)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/runs/{{schemaRunId}}",
+            "description": "Repeat until FAILED; inspect the step_failed trace explaining JSON Schema validation."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Run detail returned', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create looping step-cap draft",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Postman max-steps demo\",\n  \"maxSteps\": 2,\n  \"nodes\": [\n    {\n      \"id\": \"loop\",\n      \"type\": \"condition\",\n      \"label\": \"Always loop\",\n      \"args\": {\n        \"left\": true,\n        \"operator\": \"truthy\",\n        \"onTrueNodeId\": \"loop\",\n        \"onFalseNodeId\": \"finish\"\n      }\n    },\n    {\n      \"id\": \"finish\",\n      \"type\": \"notify\",\n      \"label\": \"Unreachable finish\"\n    }\n  ]\n}"
+            },
+            "url": "{{baseUrl}}/api/workflows"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Step-cap workflow created', function () {",
+                  "  pm.response.to.have.status(201);",
+                  "  pm.collectionVariables.set('stepCapWorkflowId', pm.response.json().workflow.id);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Publish step-cap workflow",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            },
+            "url": "{{baseUrl}}/api/workflows/{{stepCapWorkflowId}}/publish"
+          }
+        },
+        {
+          "name": "Run step-cap workflow",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            },
+            "url": "{{baseUrl}}/api/workflows/{{stepCapWorkflowId}}/run"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Step-cap run queued', function () {",
+                  "  pm.response.to.have.status(202);",
+                  "  pm.collectionVariables.set('stepCapRunId', pm.response.json().run.id);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Inspect step-cap run (expect FAILED)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/runs/{{stepCapRunId}}",
+            "description": "Repeat until FAILED; inspect the step_limit_exceeded trace."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Step-cap run detail returned', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "06 - Mock World traces",
+      "item": [
+        {
+          "name": "List mock effects",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "auth": {
+              "type": "noauth"
+            },
+            "url": "{{mockWorldUrl}}/mock/traces",
+            "description": "Verify exactly one stored mock effect exists for an approved protected-action run."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Mock effects returned', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().traces).to.be.an('array');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

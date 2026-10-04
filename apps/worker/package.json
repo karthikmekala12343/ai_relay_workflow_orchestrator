@@ -1,0 +1,26 @@
+{
+  "name": "@relay/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx watch src/index.ts",
+    "test": "tsx --test src/engine-utils.test.ts",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.22.0",
+    "@relay/shared": "*",
+    "ajv": "^8.20.0",
+    "bullmq": "^5.17.2",
+    "dotenv": "^16.4.5",
+    "openai": "^7.27.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

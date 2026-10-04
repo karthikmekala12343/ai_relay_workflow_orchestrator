@@ -1,0 +1,124 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum RunStatus {
+  QUEUED
+  RUNNING
+  WAITING_FOR_APPROVAL
+  SUCCEEDED
+  FAILED
+  CANCELLED
+}
+
+enum StepStatus {
+  PENDING
+  RUNNING
+  SUCCEEDED
+  FAILED
+}
+
+enum WorkflowStatus {
+  DRAFT
+  PUBLISHED
+}
+
+model Workflow {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  webhookSecretHash String?
+  status      WorkflowStatus @default(DRAFT)
+  publishedAt DateTime?
+  maxSteps    Int      @default(50)
+  nodes       Json
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  runs        Run[]
+}
+
+model Run {
+  id             String       @id @default(cuid())
+  workflowId     String
+  workflow       Workflow     @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  status         RunStatus    @default(QUEUED)
+  currentNodeId  String?
+  maxSteps       Int          @default(50)
+  stepsExecuted  Int          @default(0)
+  createdInput   Json?
+  workflowSnapshot Json
+  startedAt      DateTime     @default(now())
+  completedAt    DateTime?
+  updatedAt      DateTime     @updatedAt
+  steps          RunStep[]
+  approvals      Approval[]
+  traces         Trace[]
+  idempotencyKeys IdempotencyKey[]
+}
+
+model RunStep {
+  id         String     @id @default(cuid())
+  runId      String
+  run        Run        @relation(fields: [runId], references: [id], onDelete: Cascade)
+  nodeId     String
+  label      String
+  status     StepStatus @default(PENDING)
+  attempts   Int        @default(0)
+  input      Json?
+  output     Json?
+  startedAt  DateTime?
+  finishedAt DateTime?
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+
+  @@unique([runId, nodeId])
+}
+
+model Approval {
+  id         String   @id @default(cuid())
+  runId      String
+  run        Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
+  nodeId     String
+  message    String?
+  status     String   @default("PENDING")
+  createdAt  DateTime @default(now())
+  resolvedAt DateTime?
+  decision   String?
+
+  @@unique([runId, nodeId])
+}
+
+model Trace {
+  id         String   @id @default(cuid())
+  runId      String
+  run        Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
+  nodeId     String
+  event      String
+  payload    Json?
+  latencyMs  Int?
+  tokenCount Int?
+  createdAt  DateTime @default(now())
+}
+
+model IdempotencyKey {
+  id        String   @id @default(cuid())
+  runId     String
+  run       Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
+  key       String
+  response  Json?
+  createdAt DateTime @default(now())
+
+  @@unique([runId, key])
+}
+
+model MockEffect {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  response  Json
+  createdAt DateTime @default(now())
+}

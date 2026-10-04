@@ -1,0 +1,26 @@
+{
+  "name": "relay-ai-workflow-orchestrator",
+  "private": true,
+  "version": "0.1.0",
+  "license": "MIT",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspace @relay/shared && npm run build --workspace @relay/api && npm run build --workspace @relay/worker && npm run build --workspace @relay/mock-world",
+    "dev:api": "npm run build --workspace @relay/shared && npm run dev --workspace @relay/api",
+    "dev:worker": "npm run build --workspace @relay/shared && npm run dev --workspace @relay/worker",
+    "dev:mock-world": "npm run build --workspace @relay/shared && npm run dev --workspace @relay/mock-world",
+    "db:generate": "npm exec -- prisma generate",
+    "db:push": "npm exec -- prisma db push",
+    "db:migrate": "npm exec -- prisma migrate deploy",
+    "db:seed": "npm exec -- tsx prisma/seed.ts",
+    "db:validate": "npm exec -- prisma validate",
+    "test": "npm run test --workspaces --if-present"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.22.0",
+    "prisma": "^5.22.0"
+  }
+}
